@@ -2,13 +2,15 @@ name: Generate stats card
 
 on:
   schedule: # execute every 12 hours
-    - cron: "* */12 * * *"
+    - cron: "0 */12 * * *"
 
   workflow_dispatch:
 
   push:
     branches:
     - main
+    paths:
+      - '.github/workflows/stats.yml'
 
 jobs:
   generate:
@@ -19,12 +21,31 @@ jobs:
 
     steps:
       - name: generate stats.svg
-        uses: readme-tools/github-readme-stats-action@v1
-        with:
-          card: stats
-          options: username=${{ github.repository_owner }}&hide_title=false&hide_rank=false&show_icons=true&include_all_commits=false&count_private=false&disable_animations=false&theme=codeSTACKr&locale=en&hide_border=false
-          path: dist/stats.svg
-          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          STATS_USERNAME: ${{ github.repository_owner }}
+        run: |
+          mkdir -p dist
+          # Fetch public profile statistics without the repository-scoped token.
+          curl --fail --silent --show-error --location --retry 3 --get \
+            --data-urlencode "username=$STATS_USERNAME" \
+            --data-urlencode "hide_title=false" \
+            --data-urlencode "hide_rank=false" \
+            --data-urlencode "show_icons=true" \
+            --data-urlencode "include_all_commits=true" \
+            --data-urlencode "disable_animations=false" \
+            --data-urlencode "theme=codeSTACKr" \
+            --data-urlencode "locale=en" \
+            --data-urlencode "hide_border=false" \
+            "https://github-readme-stats.vercel.app/api" \
+            --output dist/stats.svg
+          # Error cards also return HTTP 200: keep the last valid card on failure.
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("dist/stats.svg").getroot()
+          assert root.tag == "{http://www.w3.org/2000/svg}svg", "Expected an SVG card"
+          assert any(node.get("data-testid") == "commits" for node in root.iter()), "Missing statistics"
+          assert 'data-testid="message"' not in open("dist/stats.svg").read(), "Stats service returned an error card"
+          PY
 
 
       - name: push stats.svg to the output branch
